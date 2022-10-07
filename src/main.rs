@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod test;
+
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -171,7 +174,7 @@ fn send(
         }));
     }
     for handle in handles {
-        handle.join();
+        handle.join().unwrap();
     }
     Ok(())
 }
@@ -225,7 +228,7 @@ fn receive(
         }
         for handle in handles {
             // wait for all threads to finish
-            handle.join();
+            handle.join().unwrap();
         }
         // let target_dir = target_dir.clone();
         // tokio::task::spawn(async move { process(stream, target_dir).await });
