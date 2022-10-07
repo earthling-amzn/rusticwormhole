@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error;
+use std::fs::OpenOptions;
 use std::io::Read;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -10,6 +11,7 @@ use std::sync::Mutex;
 use tokio::fs::{create_dir_all, File};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::time::Instant;
 use warp::{Buf, Filter};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
@@ -123,22 +125,31 @@ async fn send(
 
     let mut contents = vec![0; buf_size];
     let mut total = 0;
+    let start = Instant::now();
     loop {
         let n = file.read(&mut contents).await?;
         stream.write_all(&contents[0..n]).await?;
         stream.flush().await?;
-        print!(".");
+        // print!(".");
         total += n;
         if n == 0 {
             break;
         }
     }
-    println!("total {}", total);
+
+    {
+        use std::io::Write;
+        let elapsed = start.elapsed().as_secs_f64();
+        let mut timings:std::fs::File = OpenOptions::new().append(true).open("timings.csv").unwrap();
+        write!(timings, "{},{},{}", elapsed, total, 1)?;
+        println!("Transfer complete: {}s", elapsed);
+        println!("total {}", total);
+    }
     Ok(())
 }
 
 /// Set up a receiver service. It can only handle one file at a time because we don't negotiate a
-/// new port for each new incomming connection.
+/// new port for each new incoming connection.
 async fn receive(
     username: &str,
     port: usize,
@@ -172,14 +183,19 @@ async fn receive(
     println!("{_res:?}");
 
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
-    let (stream, _socket_addr) = listener.accept().await?;
+
     create_dir_all(&target_dir).await?;
     println!("created dir {target_dir:?}");
 
+    loop {
+        let (stream, _socket_addr) = listener.accept().await?;
+        let target_dir = target_dir.clone();
+        tokio::task::spawn(async move { process(stream, target_dir, buf_size).await });
+    }
     // let target_dir = target_dir.clone();
-    process(stream, target_dir, buf_size).await?;
+    // process(stream, target_dir, buf_size).await?;
     // tokio::task::spawn(async move { process(stream, target_dir).await });
-    Ok(())
+    // Ok(())
 }
 
 unsafe impl Send for ProcessErr {}
