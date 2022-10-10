@@ -2,16 +2,18 @@ use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::Read;
 use std::io::Seek;
 use std::io::Write;
 use std::net::SocketAddr;
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::prelude::AsRawFd;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::time::Instant;
 use tokio::fs::create_dir_all;
 use warp::{Buf, Filter};
 
@@ -90,6 +92,9 @@ fn list(registry: &str) -> Result<()> {
 
 }
 
+static FILES_TRANSFERRED: AtomicU64 = AtomicU64::new(0);
+static BYTES_TRANSFERRED: AtomicU64 = AtomicU64::new(0);
+
 /// Send a local file to a registered receiver.
 fn send(
     username: &str,
@@ -101,9 +106,9 @@ fn send(
     if !path.exists() {
         panic!("`{}` doesn't exist", path.display());
     }
-    if path.has_root() {
-        panic!("only relative paths are accepted");
-    }
+    // if path.has_root() {
+    //     panic!("only relative paths are accepted");
+    // }
     let client = hyper::Client::new();
     let uri: http::Uri = format!("http://{}", registry).parse()?;
 
@@ -120,9 +125,12 @@ fn send(
         map
     });
     drop(rt);
+
+    let start = Instant::now();
+
     let mut handles = vec![];
     let paths: Vec<PathBuf> = if path.is_dir() {
-        let x: Vec<PathBuf> = glob::glob(&format!("./{}/*", path.display())).ok().unwrap()
+        let x: Vec<PathBuf> = glob::glob(&format!("{}/*", path.display())).ok().unwrap()
             .filter_map(|p| p.ok())
             .filter(|p| !p.is_dir())
             .collect();
@@ -151,7 +159,6 @@ fn send(
             if go_ahead[0] != 1 {
                 panic!("rejected");
             }
-
             let mut contents = vec![0; buf_size];
             let mut total = 0;
             loop {
@@ -172,7 +179,6 @@ fn send(
                     println!("received {length:?} {res:?}");
                     // stream.write_all(&contents[0..n]).unwrap();
                     break;
-                    length as usize
                 } else {
                     let n = file.read(&mut contents).unwrap();
                     stream.write_all(&contents[0..n]).unwrap();
@@ -185,12 +191,19 @@ fn send(
                     break;
                 }
             }
+            FILES_TRANSFERRED.fetch_add(1, Ordering::Relaxed);
+            BYTES_TRANSFERRED.fetch_add(total as u64, Ordering::Relaxed);
             println!("total {}", total);
         }));
     }
     for handle in handles {
-        handle.join();
+        handle.join().unwrap();
     }
+    let elapsed = start.elapsed().as_secs_f64();
+    let mut timings:std::fs::File = OpenOptions::new().append(true).open("timings.csv").unwrap();
+    write!(timings, "{},{},{}", elapsed,
+           BYTES_TRANSFERRED.load(Ordering::Relaxed),
+           FILES_TRANSFERRED.load(Ordering::Relaxed)).unwrap();
     Ok(())
 }
 
@@ -302,13 +315,7 @@ fn process(
     println!("incoming file `{file_name}` from `{username}` with len {file_len}");
     let _bytes_written = stream.write(&[1])?;
 
-    if file_name.contains('/') {
-        let mut path = path.clone();
-        path.push(file_name.rsplit_once('/').unwrap().0);
-        println!("{:?}", path);
-        std::fs::create_dir_all(path).unwrap();
-    }
-    path.push(file_name);
+    prepare_path(&mut path, file_name);
 
     // If the file already exists we overwrite it.
     println!("writing to {:?}", path.display());
@@ -351,6 +358,14 @@ fn process(
     }
     println!("total {} of {}", total, file_len);
     Ok(())
+}
+
+fn prepare_path(path: &mut PathBuf, file_name: &&str) {
+    let file_path = Path::new(file_name);
+    let intermediate_dirs = trim_root_path(file_path);
+    path.push(intermediate_dirs);
+    std::fs::create_dir_all(&path).unwrap();
+    path.push(file_path.file_name().unwrap());
 }
 
 /// Used only for JSON creation.
@@ -409,4 +424,24 @@ fn registry(reg: &str) -> std::result::Result<(), std::net::AddrParseError> {
         warp::serve(routes).run(reg).await;
         Ok(())
     })
+}
+
+fn trim_root_path(p: &Path) -> &Path {
+    let d = p.parent().unwrap();
+    match d.strip_prefix("/") {
+        Ok(r) => r,
+        Err(_) => d
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_trim_root_path() {
+        assert_eq!(Path::new("root/child1"), trim_root_path(Path::new("/root/child1/child2")));
+        assert_eq!(Path::new("root/child1"), trim_root_path(Path::new("root/child1/child2")));
+        assert_eq!(Path::new(""), trim_root_path(Path::new("child2")));
+    }
 }
