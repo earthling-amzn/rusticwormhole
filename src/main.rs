@@ -159,16 +159,14 @@ fn send(
                     // file.read_to_end(&mut contents).unwrap()
                     let file_ptr = file.as_raw_fd();
                     let socket_ptr = stream.as_raw_fd();
-                    let mut length = 0; // Send all bytes.
-                    let offset = 0 as libc::off_t;
+                    let length = 0; // Send all bytes.
+                    let mut offset = 0 as libc::off_t;
                     let res = unsafe {
                         libc::sendfile(
                             file_ptr,
                             socket_ptr,
-                            offset,
-                            &mut length,
-                            std::ptr::null_mut(),
-                            0,
+                            &mut offset,
+                            length
                         )
                     };
                     println!("received {length:?} {res:?}");
