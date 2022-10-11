@@ -179,13 +179,15 @@ async fn receive(username: &str, port: usize, target_dir: PathBuf, registry: &st
     println!("{_res:?}");
 
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port))?;
-    let (stream, _socket_addr) = listener.accept()?;
+
     create_dir_all(&target_dir).await?;
     println!("created dir {target_dir:?}");
 
-    // let target_dir = target_dir.clone();
-    process(stream, target_dir).await?;
-    // tokio::task::spawn(async move { process(stream, target_dir).await });
+    loop {
+        let (stream, _socket_addr) = listener.accept()?;
+        let target_dir = target_dir.clone();
+        process(stream, target_dir).await?;
+    }
     Ok(())
 }
 
