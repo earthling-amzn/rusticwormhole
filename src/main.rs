@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error;
+use std::fs::OpenOptions;
 use std::io::Read;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -11,6 +12,7 @@ use tokio::fs::{create_dir_all, File};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use std::net::{TcpListener, TcpStream};
 use std::io::{Write};
+use std::time::Instant;
 use warp::{Buf, Filter};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
@@ -126,6 +128,7 @@ async fn send(username: &str, target: &str, path: PathBuf, registry: &str) -> Re
 
     let mut contents = vec![0; BUF_SIZE];
     let mut total = 0;
+    let start = Instant::now();
     loop {
         let n = file.read(&mut contents).await?;
         stream.write_all(&contents[0..n])?;
@@ -136,7 +139,14 @@ async fn send(username: &str, target: &str, path: PathBuf, registry: &str) -> Re
             break;
         }
     }
-    println!("total {}", total);
+
+    {
+        let elapsed = start.elapsed().as_secs_f64();
+        let mut timings:std::fs::File = OpenOptions::new().append(true).open("timings.csv").unwrap();
+        write!(timings, "{},{},{}", elapsed, total, 1)?;
+        println!("Transfer complete: {}s", elapsed);
+        println!("total {}", total);
+    }
     Ok(())
 }
 
