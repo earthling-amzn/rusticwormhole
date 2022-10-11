@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::Read;
 use std::io::Seek;
 use std::io::Write;
@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 use tokio::fs::create_dir_all;
+use std::time::Instant;
 use warp::{Buf, Filter};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
@@ -133,6 +134,7 @@ fn send(
 
     let mut contents = vec![0; buf_size];
     let mut total = 0;
+    let start = Instant::now();
     loop {
         let n = if buf_size == 0 {
             file.read_to_end(&mut contents)?
@@ -147,7 +149,14 @@ fn send(
             break;
         }
     }
-    println!("total {}", total);
+
+    {
+        let elapsed = start.elapsed().as_secs_f64();
+        let mut timings:std::fs::File = OpenOptions::new().append(true).open("timings.csv").unwrap();
+        write!(timings, "{},{},{}", elapsed, total, 1)?;
+        println!("Transfer complete: {}s", elapsed);
+        println!("total {}", total);
+    }
     Ok(())
 }
 
